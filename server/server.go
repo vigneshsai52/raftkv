@@ -29,5 +29,6 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /kv/{key}", s.handleGet)
 	mux.HandleFunc("POST /kv/{key}", s.handleSet)
 	mux.HandleFunc("DELETE /kv/{key}", s.handleDelete)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	return http.ListenAndServe(addr, mux)
 }
