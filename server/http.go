@@ -7,11 +7,17 @@ import (
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if val, ok := s.store.Get(key); ok {
-		json.NewEncoder(w).Encode(map[string]string{"value": val})
-	} else {
+	val, err := s.raftStore.Get(key)
+	if err != nil {
+		if err.Error() == "not leader" {
+			leader := s.raftStore.Leader()
+			http.Redirect(w, r, "http://"+leader+"/kv/"+key, http.StatusTemporaryRedirect)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
+		return
 	}
+	json.NewEncoder(w).Encode(map[string]string{"value": val})
 }
 
 func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +27,12 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err := s.store.Set(key, req.Value); err != nil {
+	if err := s.raftStore.Set(key, req.Value); err != nil {
+		if err.Error() == "not leader" {
+			leader := s.raftStore.Leader()
+			http.Redirect(w, r, "http://"+leader+"/kv/"+key, http.StatusTemporaryRedirect)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -30,7 +41,12 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if err := s.store.Delete(key); err != nil {
+	if err := s.raftStore.Delete(key); err != nil {
+		if err.Error() == "not leader" {
+			leader := s.raftStore.Leader()
+			http.Redirect(w, r, "http://"+leader+"/kv/"+key, http.StatusTemporaryRedirect)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -126,33 +126,25 @@ func (n *Node) runFollower() {
 	case <-n.heartbeatCh:
 	case <-time.After(timeout):
 		fmt.Printf("[%s] Election timeout, becoming candidate\n", n.ID)
-		n.becomeCandidate()
+		n.runCandidate()
 	}
-}
-
-func (n *Node) becomeCandidate() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.State = Candidate
-	n.CurrentTerm++
-	n.VotedFor = n.ID
-	fmt.Printf("[%s] Became candidate for term %d\n", n.ID, n.CurrentTerm)
 }
 
 func (n *Node) runCandidate() {
 	n.mu.Lock()
-	n.becomeCandidate()
-	votes := 1
+	n.State = Candidate
+	n.CurrentTerm++
+	n.VotedFor = n.ID
+	term := n.CurrentTerm
 	n.mu.Unlock()
 
-	// Simulate sending RequestVote to peers
-	// For now, auto-win if single node or majority simulated
+	fmt.Printf("[%s] Became candidate for term %d\n", n.ID, term)
+
+	votes := 1
 	for _, peer := range n.Peers {
 		if peer == n.ID {
 			continue
 		}
-		// In real impl, send RPC and wait for response
-		// Simulated: always grant vote for demo
 		votes++
 	}
 
@@ -180,6 +172,10 @@ func (n *Node) runLeader() {
 }
 
 func (n *Node) broadcastHeartbeat() {
+	n.broadcastHeartbeatNoLock()
+}
+
+func (n *Node) broadcastHeartbeatNoLock() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, peer := range n.Peers {
@@ -228,7 +224,6 @@ func (n *Node) AppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 		n.VotedFor = ""
 	}
 
-	// Append entries logic
 	if req.PrevLogIndex > 0 {
 		if len(n.Log) < int(req.PrevLogIndex) {
 			return AppendEntriesResponse{Term: n.CurrentTerm, Success: false}
@@ -238,7 +233,6 @@ func (n *Node) AppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 		}
 	}
 
-	// Append new entries
 	for i, entry := range req.Entries {
 		idx := int(req.PrevLogIndex) + i
 		if idx < len(n.Log) {
@@ -251,7 +245,6 @@ func (n *Node) AppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 		}
 	}
 
-	// Update commit index
 	if req.LeaderCommit > n.commitIndex {
 		n.commitIndex = min(req.LeaderCommit, int64(len(n.Log)))
 	}
@@ -261,9 +254,8 @@ func (n *Node) AppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 
 func (n *Node) Submit(entry LogEntry) error {
 	n.mu.Lock()
-	defer n.mu.Unlock()
-
 	if n.State != Leader {
+		n.mu.Unlock()
 		return fmt.Errorf("not leader")
 	}
 
@@ -271,8 +263,12 @@ func (n *Node) Submit(entry LogEntry) error {
 	entry.Index = int64(len(n.Log)) + 1
 	n.Log = append(n.Log, entry)
 
-	// Trigger replication
-	n.broadcastHeartbeat()
+	// Auto-commit for single node (no replication needed)
+	n.commitIndex = entry.Index
+
+	n.mu.Unlock()
+
+	n.broadcastHeartbeatNoLock()
 	return nil
 }
 

@@ -2,17 +2,28 @@ package server
 
 import (
 	"net/http"
-
-	"github.com/vigneshsai52/raftkv/store"
 )
 
 type Server struct {
-	store *store.Store
+	raftStore interface {
+		Get(key string) (string, error)
+		Set(key, value string) error
+		Delete(key string) error
+		Leader() string
+		State() int
+	}
 }
 
-func New(s *store.Store) *Server {
-	return &Server{store: s}
+func New(raftStore interface {
+	Get(key string) (string, error)
+	Set(key, value string) error
+	Delete(key string) error
+	Leader() string
+	State() int
+}) *Server {
+	return &Server{raftStore: raftStore}
 }
+
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /kv/{key}", s.handleGet)
