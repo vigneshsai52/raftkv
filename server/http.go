@@ -21,12 +21,18 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.store.Set(key, req.Value)
+	if err := s.store.Set(key, req.Value); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusCreated)
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	s.store.Delete(key)
+	if err := s.store.Delete(key); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/vigneshsai52/raftkv/server"
 	"github.com/vigneshsai52/raftkv/store"
@@ -21,9 +22,15 @@ func main() {
 		log.Fatalf("Failed to create data directory: %v", err)
 	}
 
+	walPath := filepath.Join(*dataDir, "wal.log")
+	s, err := store.NewStoreWithWAL(walPath)
+	if err != nil {
+		log.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer s.Close()
+
 	fmt.Printf("RaftKV starting on %s...\n", *httpAddr)
 
-	s := store.New()
 	srv := server.New(s)
 	log.Fatal(srv.Start(*httpAddr))
 }
