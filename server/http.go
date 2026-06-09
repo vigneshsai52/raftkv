@@ -9,12 +9,12 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	val, err := s.raftStore.Get(key)
 	if err != nil {
-		if err.Error() == "not leader" {
-			leader := s.raftStore.Leader()
-			http.Redirect(w, r, "http://"+leader+"/kv/"+key, http.StatusTemporaryRedirect)
+		if err.Error() == "key not found" {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"value": val})
@@ -29,8 +29,11 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.raftStore.Set(key, req.Value); err != nil {
 		if err.Error() == "not leader" {
-			leader := s.raftStore.Leader()
-			http.Redirect(w, r, "http://"+leader+"/kv/"+key, http.StatusTemporaryRedirect)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":  "not leader",
+				"leader": s.raftStore.Leader(),
+			})
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -43,8 +46,11 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	if err := s.raftStore.Delete(key); err != nil {
 		if err.Error() == "not leader" {
-			leader := s.raftStore.Leader()
-			http.Redirect(w, r, "http://"+leader+"/kv/"+key, http.StatusTemporaryRedirect)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":  "not leader",
+				"leader": s.raftStore.Leader(),
+			})
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)

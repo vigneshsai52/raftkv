@@ -24,12 +24,15 @@ func NewRaftStore(raftNode *Node, store interface {
 		store:   store,
 		applyCh: make(chan LogEntry, 100),
 	}
-	// Don't start apply loop - it causes deadlocks
-	// go rs.runApplyLoop()
+	go rs.runApplyLoop()
 	return rs
 }
 
 func (rs *RaftStore) Set(key, value string) error {
+	// Only leader can write
+	if rs.raft.State != Leader {
+		return errors.New("not leader")
+	}
 	entry := LogEntry{
 		Key:   key,
 		Value: value,
@@ -42,9 +45,7 @@ func (rs *RaftStore) Set(key, value string) error {
 }
 
 func (rs *RaftStore) Get(key string) (string, error) {
-	if rs.raft.State != Leader {
-		return "", errors.New("not leader")
-	}
+	// Allow reads on ANY node (eventual consistency)
 	val, ok := rs.store.Get(key)
 	if !ok {
 		return "", errors.New("key not found")
@@ -53,6 +54,10 @@ func (rs *RaftStore) Get(key string) (string, error) {
 }
 
 func (rs *RaftStore) Delete(key string) error {
+	// Only leader can delete
+	if rs.raft.State != Leader {
+		return errors.New("not leader")
+	}
 	entry := LogEntry{
 		Key: key,
 		Op:  "delete",
@@ -63,12 +68,26 @@ func (rs *RaftStore) Delete(key string) error {
 	return rs.store.Delete(key)
 }
 
+func (rs *RaftStore) runApplyLoop() {
+	for entry := range rs.raft.GetApplyCh() {
+		switch entry.Op {
+		case "set":
+			rs.store.Set(entry.Key, entry.Value)
+		case "delete":
+			rs.store.Delete(entry.Key)
+		}
+	}
+}
+
 func (rs *RaftStore) Leader() string {
 	if rs.raft.State == Leader {
 		return rs.raft.ID
 	}
-	if len(rs.raft.Peers) > 0 {
-		return rs.raft.Peers[0]
+	// Find leader from peers
+	for _, peer := range rs.raft.Peers {
+		if peer != rs.raft.ID {
+			return peer
+		}
 	}
 	return ""
 }

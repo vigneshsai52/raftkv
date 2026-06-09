@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -140,17 +141,55 @@ func (n *Node) runCandidate() {
 	fmt.Printf("[%s] Became candidate for term %d\n", n.ID, term)
 
 	votes := 1
+	votesMu := sync.Mutex{}
+	done := make(chan bool)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
 	for _, peer := range n.Peers {
 		if peer == n.ID {
 			continue
 		}
-		votes++
+		go func(p string) {
+			req := RequestVoteRequest{
+				Term:        term,
+				CandidateID: n.ID,
+			}
+			resp, err := n.transport.SendRequestVote(p, req)
+			if err != nil {
+				return
+			}
+
+			votesMu.Lock()
+			if resp.VoteGranted {
+				votes++
+				if votes > len(n.Peers)/2 {
+					select {
+					case done <- true:
+					default:
+					}
+				}
+			}
+			votesMu.Unlock()
+
+			if resp.Term > term {
+				n.mu.Lock()
+				if resp.Term > n.CurrentTerm {
+					n.CurrentTerm = resp.Term
+					n.State = Follower
+					n.VotedFor = ""
+				}
+				n.mu.Unlock()
+			}
+		}(peer)
 	}
 
-	if votes > len(n.Peers)/2 {
+	select {
+	case <-done:
 		n.becomeLeader()
-	} else {
-		time.Sleep(100 * time.Millisecond)
+	case <-ctx.Done():
+		// Election timeout, will retry
 	}
 }
 
@@ -349,8 +388,22 @@ func (n *Node) Submit(entry LogEntry) error {
 	n.Log = append(n.Log, entry)
 	n.mu.Unlock()
 
+	// Broadcast to followers
 	n.broadcastHeartbeat()
-	return nil
+
+	// Wait for commit (with timeout)
+	for i := 0; i < 50; i++ {
+		n.mu.Lock()
+		committed := n.commitIndex >= entry.Index
+		n.mu.Unlock()
+
+		if committed {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return fmt.Errorf("commit timeout")
 }
 
 func (n *Node) GetApplyCh() <-chan LogEntry {
