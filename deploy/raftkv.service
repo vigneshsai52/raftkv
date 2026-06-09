@@ -1,0 +1,14 @@
+[Unit]
+Description=RaftKV Node
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/raftkv
+ExecStart=/opt/raftkv/raftkv --http-addr=:8080 --raft-addr=:12000 --node-id=node1 --peers=node1,node2,node3
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

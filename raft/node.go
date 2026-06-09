@@ -252,20 +252,20 @@ func (n *Node) AppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 	return AppendEntriesResponse{Term: n.CurrentTerm, Success: true}
 }
 
-func (n *Node) Submit(entry LogEntry) error {
+func (n *Node) SubmitBatch(entries []LogEntry) error {
 	n.mu.Lock()
 	if n.State != Leader {
 		n.mu.Unlock()
 		return fmt.Errorf("not leader")
 	}
 
-	entry.Term = n.CurrentTerm
-	entry.Index = int64(len(n.Log)) + 1
-	n.Log = append(n.Log, entry)
+	for i := range entries {
+		entries[i].Term = n.CurrentTerm
+		entries[i].Index = int64(len(n.Log)) + int64(i) + 1
+	}
 
-	// Auto-commit for single node (no replication needed)
-	n.commitIndex = entry.Index
-
+	n.Log = append(n.Log, entries...)
+	n.commitIndex = int64(len(n.Log))
 	n.mu.Unlock()
 
 	n.broadcastHeartbeatNoLock()

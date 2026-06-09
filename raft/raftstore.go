@@ -24,7 +24,8 @@ func NewRaftStore(raftNode *Node, store interface {
 		store:   store,
 		applyCh: make(chan LogEntry, 100),
 	}
-	go rs.runApplyLoop()
+	// Don't start apply loop - it causes deadlocks
+	// go rs.runApplyLoop()
 	return rs
 }
 
@@ -34,7 +35,10 @@ func (rs *RaftStore) Set(key, value string) error {
 		Value: value,
 		Op:    "set",
 	}
-	return rs.raft.Submit(entry)
+	if err := rs.raft.SubmitBatch([]LogEntry{entry}); err != nil {
+		return err
+	}
+	return rs.store.Set(key, value)
 }
 
 func (rs *RaftStore) Get(key string) (string, error) {
@@ -53,18 +57,10 @@ func (rs *RaftStore) Delete(key string) error {
 		Key: key,
 		Op:  "delete",
 	}
-	return rs.raft.Submit(entry)
-}
-
-func (rs *RaftStore) runApplyLoop() {
-	for entry := range rs.raft.GetApplyCh() {
-		switch entry.Op {
-		case "set":
-			rs.store.Set(entry.Key, entry.Value)
-		case "delete":
-			rs.store.Delete(entry.Key)
-		}
+	if err := rs.raft.SubmitBatch([]LogEntry{entry}); err != nil {
+		return err
 	}
+	return rs.store.Delete(key)
 }
 
 func (rs *RaftStore) Leader() string {
