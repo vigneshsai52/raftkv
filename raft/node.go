@@ -22,36 +22,6 @@ type LogEntry struct {
 	Op    string `json:"op"`
 }
 
-type Node struct {
-	mu sync.Mutex
-
-	CurrentTerm int64
-	VotedFor    string
-	Log         []LogEntry
-
-	commitIndex int64
-	lastApplied int64
-
-	nextIndex  map[string]int64
-	matchIndex map[string]int64
-
-	ID    string
-	Peers []string
-	State State
-
-	applyCh     chan LogEntry
-	rpcCh       chan RPC
-	heartbeatCh chan struct{}
-	voteCh      chan bool
-}
-
-type RPC struct {
-	From    string
-	Term    int64
-	Type    string
-	Payload interface{}
-}
-
 type RequestVoteRequest struct {
 	Term        int64
 	CandidateID string
@@ -76,15 +46,38 @@ type AppendEntriesResponse struct {
 	Success bool
 }
 
-func NewNode(id string, peers []string) *Node {
+type Node struct {
+	mu sync.Mutex
+
+	CurrentTerm int64
+	VotedFor    string
+	Log         []LogEntry
+
+	commitIndex int64
+	lastApplied int64
+
+	nextIndex  map[string]int64
+	matchIndex map[string]int64
+
+	ID        string
+	Peers     []string
+	State     State
+	transport *Transport
+
+	applyCh     chan LogEntry
+	heartbeatCh chan struct{}
+	stopCh      chan struct{}
+}
+
+func NewNode(id string, peers []string, transport *Transport) *Node {
 	return &Node{
 		ID:          id,
 		Peers:       peers,
 		State:       Follower,
+		transport:   transport,
 		applyCh:     make(chan LogEntry, 100),
-		rpcCh:       make(chan RPC, 100),
 		heartbeatCh: make(chan struct{}, 10),
-		voteCh:      make(chan bool, len(peers)),
+		stopCh:      make(chan struct{}),
 		Log:         make([]LogEntry, 0),
 		nextIndex:   make(map[string]int64),
 		matchIndex:  make(map[string]int64),
@@ -94,6 +87,12 @@ func NewNode(id string, peers []string) *Node {
 func (n *Node) Run() {
 	go n.applyLoop()
 	for {
+		select {
+		case <-n.stopCh:
+			return
+		default:
+		}
+
 		switch n.State {
 		case Follower:
 			n.runFollower()
@@ -160,7 +159,11 @@ func (n *Node) becomeLeader() {
 	defer n.mu.Unlock()
 	n.State = Leader
 	fmt.Printf("[%s] Became leader for term %d\n", n.ID, n.CurrentTerm)
+
 	for _, peer := range n.Peers {
+		if peer == n.ID {
+			continue
+		}
 		n.nextIndex[peer] = int64(len(n.Log)) + 1
 		n.matchIndex[peer] = 0
 	}
@@ -168,21 +171,103 @@ func (n *Node) becomeLeader() {
 
 func (n *Node) runLeader() {
 	n.broadcastHeartbeat()
+	n.advanceCommitIndex()
 	time.Sleep(50 * time.Millisecond)
 }
 
 func (n *Node) broadcastHeartbeat() {
-	n.broadcastHeartbeatNoLock()
-}
-
-func (n *Node) broadcastHeartbeatNoLock() {
 	n.mu.Lock()
-	defer n.mu.Unlock()
+	if n.State != Leader {
+		n.mu.Unlock()
+		return
+	}
+
+	term := n.CurrentTerm
+	commitIdx := n.commitIndex
+	n.mu.Unlock()
+
 	for _, peer := range n.Peers {
 		if peer == n.ID {
 			continue
 		}
-		fmt.Printf("[%s] Sending heartbeat to %s (term %d)\n", n.ID, peer, n.CurrentTerm)
+		go func(p string) {
+			n.mu.Lock()
+			nextIdx := n.nextIndex[p]
+			prevLogIdx := nextIdx - 1
+			prevLogTerm := int64(0)
+			if prevLogIdx > 0 && int(prevLogIdx) <= len(n.Log) {
+				prevLogTerm = n.Log[prevLogIdx-1].Term
+			}
+
+			var entries []LogEntry
+			if int(nextIdx) <= len(n.Log) {
+				entries = n.Log[nextIdx-1:]
+			}
+			n.mu.Unlock()
+
+			req := AppendEntriesRequest{
+				Term:         term,
+				LeaderID:     n.ID,
+				PrevLogIndex: prevLogIdx,
+				PrevLogTerm:  prevLogTerm,
+				Entries:      entries,
+				LeaderCommit: commitIdx,
+			}
+
+			resp, err := n.transport.SendAppendEntries(p, req)
+			if err != nil {
+				return
+			}
+
+			n.mu.Lock()
+			defer n.mu.Unlock()
+
+			if resp.Term > n.CurrentTerm {
+				n.CurrentTerm = resp.Term
+				n.State = Follower
+				n.VotedFor = ""
+				return
+			}
+
+			if resp.Success {
+				if len(entries) > 0 {
+					n.matchIndex[p] = entries[len(entries)-1].Index
+					n.nextIndex[p] = n.matchIndex[p] + 1
+				}
+			} else {
+				n.nextIndex[p]--
+				if n.nextIndex[p] < 1 {
+					n.nextIndex[p] = 1
+				}
+			}
+		}(peer)
+	}
+}
+
+func (n *Node) advanceCommitIndex() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.State != Leader {
+		return
+	}
+
+	for idx := int64(len(n.Log)); idx > n.commitIndex; idx-- {
+		if n.Log[idx-1].Term != n.CurrentTerm {
+			break
+		}
+
+		count := 1
+		for _, peer := range n.Peers {
+			if n.matchIndex[peer] >= idx {
+				count++
+			}
+		}
+
+		if count > len(n.Peers)/2 {
+			n.commitIndex = idx
+			break
+		}
 	}
 }
 
@@ -252,23 +337,19 @@ func (n *Node) AppendEntries(req AppendEntriesRequest) AppendEntriesResponse {
 	return AppendEntriesResponse{Term: n.CurrentTerm, Success: true}
 }
 
-func (n *Node) SubmitBatch(entries []LogEntry) error {
+func (n *Node) Submit(entry LogEntry) error {
 	n.mu.Lock()
 	if n.State != Leader {
 		n.mu.Unlock()
 		return fmt.Errorf("not leader")
 	}
 
-	for i := range entries {
-		entries[i].Term = n.CurrentTerm
-		entries[i].Index = int64(len(n.Log)) + int64(i) + 1
-	}
-
-	n.Log = append(n.Log, entries...)
-	n.commitIndex = int64(len(n.Log))
+	entry.Term = n.CurrentTerm
+	entry.Index = int64(len(n.Log)) + 1
+	n.Log = append(n.Log, entry)
 	n.mu.Unlock()
 
-	n.broadcastHeartbeatNoLock()
+	n.broadcastHeartbeat()
 	return nil
 }
 

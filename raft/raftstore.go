@@ -35,7 +35,7 @@ func (rs *RaftStore) Set(key, value string) error {
 		Value: value,
 		Op:    "set",
 	}
-	if err := rs.raft.SubmitBatch([]LogEntry{entry}); err != nil {
+	if err := rs.raft.Submit(entry); err != nil {
 		return err
 	}
 	return rs.store.Set(key, value)
@@ -57,7 +57,7 @@ func (rs *RaftStore) Delete(key string) error {
 		Key: key,
 		Op:  "delete",
 	}
-	if err := rs.raft.SubmitBatch([]LogEntry{entry}); err != nil {
+	if err := rs.raft.Submit(entry); err != nil {
 		return err
 	}
 	return rs.store.Delete(key)
