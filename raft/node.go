@@ -410,6 +410,29 @@ func (n *Node) GetApplyCh() <-chan LogEntry {
 	return n.applyCh
 }
 
+// ========== NEW THREAD-SAFE METHODS (ADDED FOR RAFTSTORE) ==========
+
+// IsLeader returns true if this node is currently the leader (thread-safe)
+func (n *Node) IsLeader() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.State == Leader
+}
+
+// GetState returns the current state (thread-safe)
+func (n *Node) GetState() State {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.State
+}
+
+// GetCurrentTerm returns the current term (thread-safe)
+func (n *Node) GetCurrentTerm() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return int(n.CurrentTerm)
+}
+
 func randomTimeout(min, max time.Duration) time.Duration {
 	return min + time.Duration(time.Now().UnixNano())%(max-min)
 }

@@ -29,8 +29,8 @@ func NewRaftStore(raftNode *Node, store interface {
 }
 
 func (rs *RaftStore) Set(key, value string) error {
-	// Only leader can write
-	if rs.raft.State != Leader {
+	// Only leader can write - use thread-safe check
+	if !rs.raft.IsLeader() {
 		return errors.New("not leader")
 	}
 	entry := LogEntry{
@@ -54,8 +54,8 @@ func (rs *RaftStore) Get(key string) (string, error) {
 }
 
 func (rs *RaftStore) Delete(key string) error {
-	// Only leader can delete
-	if rs.raft.State != Leader {
+	// Only leader can delete - use thread-safe check
+	if !rs.raft.IsLeader() {
 		return errors.New("not leader")
 	}
 	entry := LogEntry{
@@ -80,7 +80,7 @@ func (rs *RaftStore) runApplyLoop() {
 }
 
 func (rs *RaftStore) Leader() string {
-	if rs.raft.State == Leader {
+	if rs.raft.IsLeader() {
 		return rs.raft.ID
 	}
 	// Find leader from peers
@@ -93,5 +93,5 @@ func (rs *RaftStore) Leader() string {
 }
 
 func (rs *RaftStore) State() int {
-	return int(rs.raft.State)
+	return int(rs.raft.GetState())
 }
