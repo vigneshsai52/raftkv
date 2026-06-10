@@ -1,5 +1,7 @@
 # RaftKV
 
+![RaftKV Overview](./image.png)
+
 Distributed key-value store with Raft consensus algorithm, built in Go.
 
 ## Features
@@ -112,8 +114,8 @@ go run tools/bench.go --addr=http://localhost:8080 --workers=20 --ops=5000 --mod
 | Leader failover | ✅ Tested | Kill leader, new leader elected in ~2s |
 | Network partition (2 nodes) | ✅ Tested | Cluster survives 1 node loss |
 | Snapshots | ✅ Implemented | Auto at 10,000 entries |
-| Metrics endpoint | ⚠️ Basic | /metrics available |
-| Production deploy | ❌ Not tested | Docker only, no real VPS |
+| Metrics endpoint | ✅ Active | Request latency & throughput tracking |
+| Production deploy | 🔄 In progress | Docker ready, cloud deploy planned |
 
 ## License
 
